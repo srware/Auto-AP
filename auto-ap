@@ -1,0 +1,101 @@
+#!/usr/bin/python
+
+#
+# Author: Scott Ware
+# Version: 0.1
+# Copyright (c) 2015 Scott Ware
+#
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to
+# the following conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+
+import os
+import sys
+from sys import stdout
+import subprocess
+import dbus
+import time
+
+TIMEOUT = 60
+INTERVAL = 10
+PID_PATH = "/etc/wifi-manager/wm.pid"
+
+# Setup Connman dbus API
+bus = dbus.SystemBus()
+
+try:
+	manager = dbus.Interface(bus.get_object('net.connman', "/"),
+					'net.connman.Manager')
+except dbus.DBusException, e:
+	if "ServiceUnknown" in str(e):
+		print "Error: Connman service is not currently running!"
+	else:
+		print("Error: " + e)
+
+	sys.exit()
+
+#
+# Helper Functions
+#
+
+def isWiFiAvailable():
+    	technologies = manager.GetTechnologies()
+    	for (path, properties) in technologies:
+		if properties["Type"] == "wifi":
+	    		return True
+
+    	return False
+
+def isTetheringEnabled():
+    	technologies = manager.GetTechnologies()
+    	for (path, properties) in technologies:
+        	if properties["Type"] == "wifi":
+            		if properties["Tethering"] == dbus.Boolean(1):
+				return True
+
+    	return False
+
+
+# Watchdog to check connection status and enable AP mode if necessary
+
+# Check the system has wifi
+if not isWiFiAvailable():
+    sys.exit("WiFi interface not available on this device.")
+
+count = 0
+
+while True:
+    	# Check WiFi tethering is not enabled
+    	if not isTetheringEnabled():
+        	# Check current network status
+		properties = manager.GetProperties()
+		if os.path.exists(PID_PATH):
+			count = 0
+        	elif properties["State"] == "online" or properties["State"] == "ready":
+	    		count = 0
+        	else:
+	    		count = count + INTERVAL
+	
+			# Enable AP mode if timeout exceeded
+			if count >= TIMEOUT:
+	    			subprocess.call("/usr/bin/wifi-manager tether enable", shell=True)
+	    			count = 0
+
+    	time.sleep(INTERVAL)	    
+    
